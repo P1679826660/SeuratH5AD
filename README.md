@@ -17,3 +17,9 @@
 ```r
 # devtools needs to be installed
 devtools::install_github("P1679826660/SeuratH5AD")
+
+library(SeuratH5AD)
+# 测试读取
+seu <- h5ad_to_seurat("test.h5ad")
+# 测试导出
+seurat_to_h5ad(seu, "final_product.h5ad")
