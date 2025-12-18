@@ -1,24 +1,24 @@
 # ==============================================================================
-# 模块名称：H5AD Metadata Reader (V2 Fixed)
-# 功能描述：读取 obs 或 var 组并转换为 DataFrame，增强了对空列情况的处理
+# Module Name: H5AD Metadata Reader (V2 Fixed)
+# Function Description: Reads obs or var groups and converts them to DataFrames, enhanced with handling for empty column scenarios.
 # ==============================================================================
 
-#' 读取 obs 或 var 组并转换为 DataFrame
+#' Read obs or var groups and convert to DataFrame
 read_h5ad_dataframe <- function(h5_file, group_name = "obs") {
   if (!h5_file$exists(group_name)) return(NULL)
   
   grp <- h5_file[[group_name]]
   
-  # 1. 寻找索引 (Index)
-  # AnnData 通常在 group 属性中存储 '_index' 指向索引列名
+  # 1. Find Index
+  # AnnData usually stores the index column name in the group attribute '_index'
   attrs <- h5_node_attributes(grp)
   index_col_name <- if("_index" %in% names(attrs)) attrs[["_index"]] else "_index"
   
-  # 2. 遍历读取列
+  # 2. Iterate and read columns
   df_list <- list()
   dataset_names <- grp$ls(recursive = FALSE)$name
   
-  # 过滤掉特殊的 __categories (如果有)
+  # Filter out special __categories (if any)
   dataset_names <- dataset_names[!grepl("^__", dataset_names)]
   
   row_names_vals <- NULL
@@ -26,60 +26,60 @@ read_h5ad_dataframe <- function(h5_file, group_name = "obs") {
   for (name in dataset_names) {
     obj <- grp[[name]]
     
-    # 只处理 Dataset
+    # Process Datasets only
     if (inherits(obj, "H5D")) {
       val <- obj$read()
       
       if (name == index_col_name) {
         row_names_vals <- val
       } else {
-        # 确保读取的是向量，如果是多维数组(除了1D)，可能需要处理
+        # Ensure reading a vector; if it is a multi-dimensional array (other than 1D), it might need handling
         if (is.null(dim(val)) || length(dim(val)) == 1) {
           df_list[[name]] <- val
         } else {
-          # 如果遇到多维数组作为metadata列(比较少见)，暂且跳过或取第一列
-          # 为了工程稳定性，这里选择警告并跳过，防止破坏 data.frame 结构
-          warning(paste("跳过复杂结构的元数据列:", name))
+          # If a multi-dimensional array is encountered as a metadata column (rare), skip it or take the first column
+          # For engineering stability, choosing to warn and skip here to prevent breaking the data.frame structure
+          warning(paste("Skipping metadata column with complex structure:", name))
         }
       }
     }
   }
   
-  # 3. 构建 DataFrame (核心修复部分)
+  # 3. Construct DataFrame (Core Fix Section)
   
-  # 情况 A: 只有索引，没有其他数据列 (df_list 为空)
+  # Case A: Only index, no other data columns (df_list is empty)
   if (length(df_list) == 0) {
     if (!is.null(row_names_vals)) {
-      # 创建一个只有行名，没有列的 DataFrame
-      # 必须显式指定 row.names 来确立行数
+      # Create a DataFrame with only row names and no columns
+      # Must explicitly specify row.names to establish row count
       df <- data.frame(row.names = row_names_vals)
     } else {
-      # 既没数据也没索引，返回 NULL 或空对象
+      # Neither data nor index exists, return NULL or empty object
       return(NULL)
     }
   } else {
-    # 情况 B: 有数据列
-    # 先构建数据框，暂不设行名，避免长度不匹配直接报错
+    # Case B: Has data columns
+    # Construct data frame first, do not set row names yet to avoid immediate error due to length mismatch
     df <- data.frame(df_list, stringsAsFactors = FALSE)
     
-    # 安全地设置行名
+    # Safely set row names
     if (!is.null(row_names_vals)) {
-      # 1. 检查去重
+      # 1. Check for duplicates
       if (anyDuplicated(row_names_vals)) {
-        warning(paste0(group_name, " 索引包含重复项，正在通过 make.unique 去重..."))
+        warning(paste0(group_name, " index contains duplicates, deduplicating via make.unique..."))
         row_names_vals <- make.unique(as.character(row_names_vals))
       }
       
-      # 2. 检查长度一致性 (这是你报错的核心原因)
+      # 2. Check length consistency
       if (length(row_names_vals) == nrow(df)) {
         rownames(df) <- row_names_vals
       } else {
-        # 严重警告：索引长度与数据长度不符
+        # Critical Warning: Index length does not match data length
         warning(sprintf(
-          "警告：在 %s 中，索引长度 (%d) 与数据列长度 (%d) 不匹配。将忽略原有索引，使用数字索引。",
+          "Warning: In %s, index length (%d) does not match data column length (%d). Ignoring original index, using numeric index.",
           group_name, length(row_names_vals), nrow(df)
         ))
-        # 此时保留数字索引，不强行赋值，防止 crash
+        # Keep numeric index at this point, do not force assignment to prevent crash
       }
     }
   }
@@ -87,6 +87,5 @@ read_h5ad_dataframe <- function(h5_file, group_name = "obs") {
   return(df)
 }
 
-# 确保辅助函数存在 (如果你的 convert_h5ad.R 没有独立 source 这个，建议保留在这里或确保 matrix 模块已加载)
-# 这里为了安全起见，如果不报错重复定义，可以不写。
-# 但为了确保独立性，假设它在 utils_h5_matrix.R 中定义了，这里就不重复定义了。
+# Ensure helper functions exist (If your convert_h5ad.R does not source this independently, keep it here or ensure the matrix module is loaded)
+# For safety, duplicate definitions are avoided here assuming it is defined in utils_h5_matrix.R.
