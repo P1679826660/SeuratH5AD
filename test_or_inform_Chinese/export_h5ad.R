@@ -1,70 +1,70 @@
 # ==============================================================================
-# 模块名称：Seurat to H5AD Exporter (Main V2 Fixed)
-# 功能描述：主控程序，修复 namespace 导出报错
+# Module Name: Seurat to H5AD Exporter (Main V2 Fixed)
+# Function Description: Main controller program, fixes namespace export errors
 # ==============================================================================
 
-#' 将 Seurat V5 对象导出为 .h5ad 文件
-#' @param seurat_obj Seurat 对象
-#' @param file_path 输出路径 (例如 "output.h5ad")
+#' Export Seurat V5 object to .h5ad file
+#' @param seurat_obj Seurat Object
+#' @param file_path Output path (e.g., "output.h5ad")
 #' @export
 seurat_to_h5ad <- function(seurat_obj, file_path) {
   
-  message(">>> [Export] 开始导出 Seurat 对象到: ", file_path)
+  message(">>> [Export] Starting export of Seurat object to: ", file_path)
   
-  # 0. 准备环境
+  # 0. Prepare environment
   if (file.exists(file_path)) file.remove(file_path)
   file_h5 <- hdf5r::H5File$new(file_path, mode = "w")
   on.exit(file_h5$close_all(), add = TRUE)
   
   assay_name <- Seurat::DefaultAssay(seurat_obj)
-  message("    - 使用 Default Assay: ", assay_name)
+  message("    - Using Default Assay: ", assay_name)
   
-  # 1. 写入 X (主矩阵)
-  message(">>> [Phase 1] 写入主矩阵 X ...")
+  # 1. Write X (Main Matrix)
+  message(">>> [Phase 1] Writing main matrix X ...")
   
-  # [修复点 1] 获取可用 layers
+  # [Fix Point 1] Get available layers
   layers_avail <- names(seurat_obj[[assay_name]]@layers)
   
-  # 决策：如果有 'data'，优先用 'data'；否则用 'counts'
-  main_layer <- "counts" # 默认 fallback
+  # Decision: Prioritize 'data' if available; otherwise use 'counts'
+  main_layer <- "counts" # Default fallback
   if ("data" %in% layers_avail) {
     main_layer <- "data"
   }
   
-  message(sprintf("    - 选定 Layer '%s' 作为 X", main_layer))
+  message(sprintf("    - Selected Layer '%s' as X", main_layer))
   
-  # [修复点 2] 使用 GetAssayData 替代 LayerData
+  # [Fix Point 2] Use GetAssayData instead of LayerData
   main_mat <- Seurat::GetAssayData(seurat_obj, layer = main_layer, assay = assay_name)
   
-  # 创建 X 组
+  # Create X group
   x_grp <- file_h5$create_group("X")
-  # 调用矩阵写入模块 (自动处理转置和 CSC 格式)
+  # Call matrix writing module (handles transposition and CSC format automatically)
   write_matrix_h5(x_grp, main_mat)
   
-  # 2. 写入 obs (细胞元数据)
-  message(">>> [Phase 2] 写入 obs (Cell Metadata)...")
+  # 2. Write obs (Cell Metadata)
+  message(">>> [Phase 2] Writing obs (Cell Metadata)...")
   write_dataframe_h5(file_h5, "obs", seurat_obj@meta.data)
   
-  # 3. 写入 var (基因元数据)
-  message(">>> [Phase 3] 写入 var (Feature Metadata)...")
-  # Seurat V5 中 feature metadata 在 assay 的 meta.data 里
+  # 3. Write var (Feature Metadata)
+  message(">>> [Phase 3] Writing var (Feature Metadata)...")
+  # In Seurat V5, feature metadata is located in the assay's meta.data
   feat_meta <- seurat_obj[[assay_name]][[]]
   
-  # 确保行名存在 (基因名)
+  # Ensure row names exist (Gene names)
   if (nrow(feat_meta) == 0) {
-    # 如果没元数据，至少创建一个只有索引的 DF
+    # If no metadata, create a DF with indices only
     feat_meta <- data.frame(row.names = rownames(seurat_obj))
   }
   write_dataframe_h5(file_h5, "var", feat_meta)
   
-  # 4. 写入 obsm (降维)
-  message(">>> [Phase 4] 写入 obsm (Embeddings)...")
+  # 4. Write obsm (Embeddings)
+  message(">>> [Phase 4] Writing obsm (Embeddings)...")
   write_obsm_h5(file_h5, seurat_obj)
   
-  # 5. 写入 layers (其他矩阵)
-  message(">>> [Phase 5] 写入 layers (Additional Layers)...")
+  # 5. Write layers (Additional Layers)
+  message(">>> [Phase 5] Writing layers (Additional Layers)...")
   write_layers_h5(file_h5, seurat_obj)
   
-  message(">>> 导出成功！")
+  message(">>> Export successful!")
   return(invisible(TRUE))
 }
