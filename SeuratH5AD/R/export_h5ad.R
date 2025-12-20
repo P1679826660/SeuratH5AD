@@ -26,11 +26,11 @@ seurat_to_h5ad <- function(seurat_obj, file_path, compression_level = 4, write_r
      main_layer <- 'data'
   }
 
-  # [FIX] Use layer instead of slot to avoid Seurat V5 deprecation warnings
+  # Use 'layer' argument to avoid Seurat V5 deprecation warnings
   main_mat <- tryCatch({
     Seurat::GetAssayData(seurat_obj, layer = main_layer, assay = assay_name)
   }, error = function(e) {
-    # Fallback: try asking for 'data' layer explicitly
+    # Fallback
     Seurat::GetAssayData(seurat_obj, layer = 'data', assay = assay_name)
   })
 
@@ -43,13 +43,12 @@ seurat_to_h5ad <- function(seurat_obj, file_path, compression_level = 4, write_r
   if (nrow(feat_meta) == 0) feat_meta <- data.frame(row.names = rownames(seurat_obj))
   write_dataframe_h5(file_h5, 'var', feat_meta)
 
-  # [FIX] Check for counts using 'layer' instead of 'slot'
+  # Check for counts using 'layer'
   has_counts <- tryCatch({
     !is.null(Seurat::GetAssayData(seurat_obj, layer = 'counts', assay = assay_name))
   }, error = function(e) FALSE)
 
   if (write_raw_slot && has_counts) {
-    # [FIX] Use layer='counts'
     counts_mat <- Seurat::GetAssayData(seurat_obj, layer = 'counts', assay = assay_name)
     
     raw_grp <- file_h5$create_group('raw')
