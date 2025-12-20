@@ -16,7 +16,7 @@
 
 ```r
 # devtools needs to be installed
-devtools::install_github("P1679826660/SeuratH5AD")
+devtools::install_github("P1679826660/SeuratH5AD",subdir = "SeuratH5AD")
 
 library(SeuratH5AD)
 # read
