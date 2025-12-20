@@ -3,24 +3,22 @@
 NULL
 
 write_matrix_h5 <- function(h5_group, mat, compression_level = 4) {
-  # Force conversion to dgCMatrix (CsparseMatrix)
-  # This ensures slots @i, @p, @x are available
+  # Robustness: Force conversion to dgCMatrix (CsparseMatrix)
+  # This guarantees slots @i, @p, @x exist, preventing crashes with dense matrices.
   if (!inherits(mat, "CsparseMatrix")) {
     mat <- methods::as(mat, "CsparseMatrix")
   }
 
-  # Seurat (Genes x Cells) -> H5AD (Cells x Genes)
-  # Transpose required
+  # Transpose: Seurat (Genes x Cells) -> H5AD (Cells x Genes)
   mat_t <- Matrix::t(mat)
 
-  # Double check it remains CsparseMatrix after transpose
+  # Re-verify sparseness after transpose
   if (!inherits(mat_t, "CsparseMatrix")) {
     mat_t <- methods::as(mat_t, "CsparseMatrix")
   }
 
-  # [FIX] Handle Logical/Boolean matrices
-  # HDF5 does not support boolean arrays in this context natively. 
-  # Convert data values (@x) to numeric (0/1) to prevent write errors.
+  # Compatibility: Handle Logical/Boolean matrices
+  # HDF5 does not natively support boolean arrays in this context. Convert to 0/1.
   data_values <- mat_t@x
   if (is.logical(data_values)) {
     data_values <- as.numeric(data_values)
@@ -30,7 +28,7 @@ write_matrix_h5 <- function(h5_group, mat, compression_level = 4) {
   h5_group$create_dataset('indices', mat_t@i, gzip_level = compression_level)
   h5_group$create_dataset('indptr', mat_t@p, gzip_level = compression_level)
 
-  # Attributes
+  # Write Attributes
   h5_group$create_attr('encoding-type', 'csc_matrix')
   h5_group$create_attr('encoding-version', '0.1.0')
   h5_group$create_attr('shape', dim(mat_t))
@@ -40,7 +38,7 @@ write_dataframe_h5 <- function(h5_file, group_name, df, index_name = '_index') {
   if (is.null(df)) return()
   if (!is.data.frame(df)) df <- as.data.frame(df)
 
-  # Clean existing group
+  # Clean existing group to prevent conflicts
   if (h5_file$exists(group_name)) h5_file$link_delete(group_name)
   grp <- h5_file$create_group(group_name)
 
@@ -57,7 +55,7 @@ write_dataframe_h5 <- function(h5_file, group_name, df, index_name = '_index') {
   for (col in colnames(df)) {
     val <- df[[col]]
 
-    # [FIX] Flatten list columns to string
+    # Anti-Crash: Flatten list columns to semi-colon separated strings
     if (is.list(val)) {
       val <- vapply(val, function(x) paste(as.character(x), collapse = ";"), character(1))
     }
@@ -65,8 +63,9 @@ write_dataframe_h5 <- function(h5_file, group_name, df, index_name = '_index') {
     if (is.factor(val)) val <- as.character(val)
     if (is.character(val)) val[is.na(val)] <- ''
 
-    # [FIX] Atomic check + Logical conversion
+    # Check for Atomic types before writing
     if (is.atomic(val)) {
+      # Convert logicals to integers
       if (is.logical(val)) val <- as.integer(val)
 
       tryCatch({
@@ -97,7 +96,7 @@ write_obsm_h5 <- function(h5_file, seurat_obj) {
     key_name <- paste0('X_', red)
     if (!is.matrix(emb)) emb <- as.matrix(emb)
 
-    # Embeddings are (Cells x PCs). Direct write.
+    # Embeddings are (Cells x PCs). Direct write is correct.
     tryCatch({
       obsm_grp$create_dataset(key_name, emb)
     }, error = function(e) NULL)
@@ -107,6 +106,7 @@ write_obsm_h5 <- function(h5_file, seurat_obj) {
 write_layers_h5 <- function(h5_file, seurat_obj) {
   assay_name <- Seurat::DefaultAssay(seurat_obj)
   
+  # Seurat V5 Layer detection
   layer_names <- tryCatch({
     SeuratObject::Layers(seurat_obj, assay = assay_name)
   }, error = function(e) {
@@ -118,8 +118,10 @@ write_layers_h5 <- function(h5_file, seurat_obj) {
   if (!h5_file$exists('layers')) layers_grp <- h5_file$create_group('layers') else layers_grp <- h5_file[['layers']]
 
   for (lname in layer_names) {
+    # Skip standard slots as they are handled in X or raw
     if (lname %in% c('data', 'counts')) next
 
+    # Use 'layer' argument for Seurat V5 compatibility
     mat <- tryCatch({
       Seurat::GetAssayData(seurat_obj, layer = lname, assay = assay_name)
     }, error = function(e) NULL)
