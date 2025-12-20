@@ -18,16 +18,15 @@ seurat_to_h5ad <- function(seurat_obj, file_path, compression_level = 4, write_r
 
   assay_name <- Seurat::DefaultAssay(seurat_obj)
 
-  # Determine main layer for X
-  # For Seurat V5, check layers explicitly
+  # Logic for V5 vs V3
   if (inherits(seurat_obj[[assay_name]], "Assay5")) {
      layers_avail <- SeuratObject::Layers(seurat_obj, assay = assay_name)
      main_layer <- if ('data' %in% layers_avail) 'data' else 'counts'
   } else {
-     # Seurat V3/V4
      main_layer <- 'data'
   }
 
+  # Robust Data Fetching
   main_mat <- tryCatch({
     Seurat::GetAssayData(seurat_obj, layer = main_layer, assay = assay_name)
   }, error = function(e) {
@@ -43,7 +42,7 @@ seurat_to_h5ad <- function(seurat_obj, file_path, compression_level = 4, write_r
   if (nrow(feat_meta) == 0) feat_meta <- data.frame(row.names = rownames(seurat_obj))
   write_dataframe_h5(file_h5, 'var', feat_meta)
 
-  # Write Raw counts if requested and available
+  # Raw Counts Logic
   has_counts <- tryCatch({
     !is.null(Seurat::GetAssayData(seurat_obj, slot = 'counts', assay = assay_name))
   }, error = function(e) FALSE)
