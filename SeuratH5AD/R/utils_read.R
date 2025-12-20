@@ -7,7 +7,7 @@ read_h5ad_dataframe <- function(h5_file, group_name = 'obs') {
 
   df_list <- list()
   
-  # Retrieve dataset names, filtering out internal HDF5 references
+  # Filter for datasets only (HARD links), ignoring Groups (categoricals) for stability
   dataset_names <- grp$ls(recursive = FALSE)
   dataset_names <- dataset_names[dataset_names$link.type == 'H5L_TYPE_HARD', 'name']
   dataset_names <- dataset_names[!grepl('^__', dataset_names)]
@@ -16,6 +16,7 @@ read_h5ad_dataframe <- function(h5_file, group_name = 'obs') {
 
   for (name in dataset_names) {
     obj <- grp[[name]]
+    # Ensure it's a Dataset, not a Group
     if (inherits(obj, 'H5D')) {
       val <- tryCatch(obj$read(), error = function(e) NULL)
       if (is.null(val)) next
@@ -30,20 +31,26 @@ read_h5ad_dataframe <- function(h5_file, group_name = 'obs') {
 
   if (length(df_list) == 0 && is.null(row_names_vals)) return(NULL)
 
-  # Construct DataFrame safely
-  if (length(df_list) > 0) {
-    max_len <- if (!is.null(row_names_vals)) length(row_names_vals) else max(sapply(df_list, length))
+  # Safe DataFrame Construction
+  df <- tryCatch({
+    if (length(df_list) > 0) {
+      max_len <- if (!is.null(row_names_vals)) length(row_names_vals) else max(sapply(df_list, length))
 
-    safe_list <- lapply(df_list, function(v) {
-      if (length(v) == max_len) return(v)
-      if (length(v) < max_len) return(c(v, rep(NA, max_len - length(v))))
-      return(v[1:max_len])
-    })
-
-    df <- data.frame(safe_list, stringsAsFactors = FALSE)
-  } else {
-    df <- data.frame(row.names = seq_along(row_names_vals))
-  }
+      safe_list <- lapply(df_list, function(v) {
+        if (length(v) == max_len) return(v)
+        if (length(v) < max_len) return(c(v, rep(NA, max_len - length(v))))
+        return(v[1:max_len])
+      })
+      data.frame(safe_list, stringsAsFactors = FALSE)
+    } else {
+      data.frame(row.names = seq_along(row_names_vals))
+    }
+  }, error = function(e) {
+    message("Warning: Failed to construct dataframe for ", group_name)
+    return(NULL)
+  })
+  
+  if (is.null(df)) return(NULL)
 
   if (!is.null(row_names_vals)) {
     row_names_vals <- as.character(row_names_vals)
@@ -71,15 +78,12 @@ add_reductions <- function(seu, h5_file) {
       if (is.null(raw_emb)) next
       if (!is.matrix(raw_emb)) raw_emb <- as.matrix(raw_emb)
 
-      # Standard H5AD obsm is (Cells x PCs)
-      # Check dimension compatibility
+      # Check dimension (Cells x PCs)
       if (nrow(raw_emb) == length(cell_names)) {
-        # Correct orientation
+        # OK
       } else if (ncol(raw_emb) == length(cell_names)) {
-        # Transposed orientation, correct it
         raw_emb <- t(raw_emb)
       } else {
-        # Dimension mismatch, skip
         next
       }
 
@@ -102,11 +106,9 @@ add_layers <- function(seu, h5_file) {
   grp <- h5_file[['layers']]
 
   for (lname in grp$ls(recursive = FALSE)$name) {
-    # Layers follow X dimensions (Cells x Genes)
     mat <- read_matrix_node(grp[[lname]], transpose_output = FALSE)
     if (is.null(mat)) next
 
-    # Transpose to (Genes x Cells) for Seurat
     mat <- Matrix::t(mat)
 
     if (ncol(mat) == ncol(seu) && nrow(mat) == nrow(seu)) {
@@ -119,9 +121,7 @@ add_layers <- function(seu, h5_file) {
         } else {
           Seurat::SetAssayData(seu, slot = 'data', new.data = mat, assay = da)
         }
-      }, error = function(e) {
-        warning(sprintf("Could not add layer %s: %s", lname, e$message))
-      })
+      }, error = function(e) NULL)
     }
   }
   return(seu)
