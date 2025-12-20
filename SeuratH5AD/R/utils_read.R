@@ -7,7 +7,6 @@ read_h5ad_dataframe <- function(h5_file, group_name = 'obs') {
 
   df_list <- list()
   
-  # Filter for datasets only (HARD links), ignoring Groups (categoricals) for stability
   dataset_names <- grp$ls(recursive = FALSE)
   dataset_names <- dataset_names[dataset_names$link.type == 'H5L_TYPE_HARD', 'name']
   dataset_names <- dataset_names[!grepl('^__', dataset_names)]
@@ -16,7 +15,6 @@ read_h5ad_dataframe <- function(h5_file, group_name = 'obs') {
 
   for (name in dataset_names) {
     obj <- grp[[name]]
-    # Ensure it's a Dataset, not a Group
     if (inherits(obj, 'H5D')) {
       val <- tryCatch(obj$read(), error = function(e) NULL)
       if (is.null(val)) next
@@ -31,7 +29,6 @@ read_h5ad_dataframe <- function(h5_file, group_name = 'obs') {
 
   if (length(df_list) == 0 && is.null(row_names_vals)) return(NULL)
 
-  # Safe DataFrame Construction
   df <- tryCatch({
     if (length(df_list) > 0) {
       max_len <- if (!is.null(row_names_vals)) length(row_names_vals) else max(sapply(df_list, length))
@@ -78,7 +75,6 @@ add_reductions <- function(seu, h5_file) {
       if (is.null(raw_emb)) next
       if (!is.matrix(raw_emb)) raw_emb <- as.matrix(raw_emb)
 
-      # Check dimension (Cells x PCs)
       if (nrow(raw_emb) == length(cell_names)) {
         # OK
       } else if (ncol(raw_emb) == length(cell_names)) {
@@ -112,14 +108,15 @@ add_layers <- function(seu, h5_file) {
     mat <- Matrix::t(mat)
 
     if (ncol(mat) == ncol(seu) && nrow(mat) == nrow(seu)) {
-      target_slot <- if (lname %in% c('logcounts', 'norm_data')) 'data' else if (grepl('scale', lname)) 'scale.data' else 'data'
+      target_layer <- if (lname %in% c('logcounts', 'norm_data')) 'data' else if (grepl('scale', lname)) 'scale.data' else 'data'
       da <- Seurat::DefaultAssay(seu)
 
       tryCatch({
-        if (target_slot == 'scale.data') {
-          Seurat::SetAssayData(seu, slot = 'scale.data', new.data = as.matrix(mat), assay = da)
+        # [FIX] Use layer argument consistently
+        if (target_layer == 'scale.data') {
+           Seurat::SetAssayData(seu, layer = 'scale.data', new.data = as.matrix(mat), assay = da)
         } else {
-          Seurat::SetAssayData(seu, slot = 'data', new.data = mat, assay = da)
+           Seurat::SetAssayData(seu, layer = 'data', new.data = mat, assay = da)
         }
       }, error = function(e) NULL)
     }
