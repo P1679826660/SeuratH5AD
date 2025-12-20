@@ -3,28 +3,34 @@
 NULL
 
 write_matrix_h5 <- function(h5_group, mat, compression_level = 4) {
-  # Ensure input is a compressed sparse column matrix (dgCMatrix)
-  # This guarantees the existence of @i, @p, and @x slots
+  # Force conversion to dgCMatrix (CsparseMatrix)
+  # This ensures slots @i, @p, @x are available
   if (!inherits(mat, "CsparseMatrix")) {
     mat <- methods::as(mat, "CsparseMatrix")
   }
 
-  # H5AD 'X' is typically stored as (n_obs x n_vars) -> (Cells x Genes)
-  # Seurat stores data as (n_features x n_cells) -> (Genes x Cells)
-  # We transpose here to match H5AD standard
+  # Seurat (Genes x Cells) -> H5AD (Cells x Genes)
+  # Transpose required
   mat_t <- Matrix::t(mat)
 
-  # Ensure the transposed matrix is also sparse
+  # Double check it remains CsparseMatrix after transpose
   if (!inherits(mat_t, "CsparseMatrix")) {
     mat_t <- methods::as(mat_t, "CsparseMatrix")
   }
 
-  h5_group$create_dataset('data', mat_t@x, gzip_level = compression_level)
+  # [FIX] Handle Logical/Boolean matrices
+  # HDF5 does not support boolean arrays in this context natively. 
+  # Convert data values (@x) to numeric (0/1) to prevent write errors.
+  data_values <- mat_t@x
+  if (is.logical(data_values)) {
+    data_values <- as.numeric(data_values)
+  }
+
+  h5_group$create_dataset('data', data_values, gzip_level = compression_level)
   h5_group$create_dataset('indices', mat_t@i, gzip_level = compression_level)
   h5_group$create_dataset('indptr', mat_t@p, gzip_level = compression_level)
 
-  # Explicitly define attributes for CSC matrix
-  # While CSR is common in Python, CSC is valid and native to R's internal representation
+  # Attributes
   h5_group$create_attr('encoding-type', 'csc_matrix')
   h5_group$create_attr('encoding-version', '0.1.0')
   h5_group$create_attr('shape', dim(mat_t))
@@ -34,6 +40,7 @@ write_dataframe_h5 <- function(h5_file, group_name, df, index_name = '_index') {
   if (is.null(df)) return()
   if (!is.data.frame(df)) df <- as.data.frame(df)
 
+  # Clean existing group
   if (h5_file$exists(group_name)) h5_file$link_delete(group_name)
   grp <- h5_file$create_group(group_name)
 
@@ -50,18 +57,16 @@ write_dataframe_h5 <- function(h5_file, group_name, df, index_name = '_index') {
   for (col in colnames(df)) {
     val <- df[[col]]
 
-    # Flatten list columns to avoid HDF5 write errors
+    # [FIX] Flatten list columns to string
     if (is.list(val)) {
-      # Collapse list elements into semi-colon separated strings
       val <- vapply(val, function(x) paste(as.character(x), collapse = ";"), character(1))
     }
 
     if (is.factor(val)) val <- as.character(val)
     if (is.character(val)) val[is.na(val)] <- ''
 
-    # Only write atomic vectors
+    # [FIX] Atomic check + Logical conversion
     if (is.atomic(val)) {
-      # Convert logicals to integers as HDF5 does not support boolean natively in some contexts
       if (is.logical(val)) val <- as.integer(val)
 
       tryCatch({
@@ -89,24 +94,22 @@ write_obsm_h5 <- function(h5_file, seurat_obj) {
 
     if (is.null(emb)) next
 
-    # Standardize naming convention to X_name
     key_name <- paste0('X_', red)
-
     if (!is.matrix(emb)) emb <- as.matrix(emb)
 
-    # Embeddings are (Cells x PCs), which matches H5AD requirements. No transpose needed.
-    obsm_grp$create_dataset(key_name, emb)
+    # Embeddings are (Cells x PCs). Direct write.
+    tryCatch({
+      obsm_grp$create_dataset(key_name, emb)
+    }, error = function(e) NULL)
   }
 }
 
 write_layers_h5 <- function(h5_file, seurat_obj) {
   assay_name <- Seurat::DefaultAssay(seurat_obj)
   
-  # Support Seurat V5 layers
   layer_names <- tryCatch({
     SeuratObject::Layers(seurat_obj, assay = assay_name)
   }, error = function(e) {
-    # Fallback for older Seurat objects or specific assay types
     names(seurat_obj[[assay_name]]@layers)
   })
 
@@ -115,7 +118,6 @@ write_layers_h5 <- function(h5_file, seurat_obj) {
   if (!h5_file$exists('layers')) layers_grp <- h5_file$create_group('layers') else layers_grp <- h5_file[['layers']]
 
   for (lname in layer_names) {
-    # Skip standard slots as they are handled in X or raw
     if (lname %in% c('data', 'counts')) next
 
     mat <- tryCatch({
