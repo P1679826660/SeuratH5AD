@@ -25,7 +25,6 @@ read_h5ad_dataframe <- function(h5_file, group_name = 'obs') {
       if ('categories' %in% names(obj_attrs)) {
         cat_ref <- obj_attrs[['categories']]
         
-
         categories <- NULL
         tryCatch({
           if (inherits(cat_ref, "H5Ref")) {
@@ -41,16 +40,17 @@ read_h5ad_dataframe <- function(h5_file, group_name = 'obs') {
         if (!is.null(categories)) {
           val_indices <- as.integer(val)
           
+          # R is 1-based, HDF5 (Python) is 0-based
           val_r_indices <- val_indices + 1
           
           val_mapped <- categories[val_r_indices]
           
           val <- val_mapped
           
+          # Optional: Convert to factor if needed
           # val <- factor(val, levels = categories)
         }
       }
-      # --- [FIX END] ---
 
       if (name == index_col_name) {
         row_names_vals <- val
@@ -94,3 +94,85 @@ read_h5ad_dataframe <- function(h5_file, group_name = 'obs') {
   return(df)
 }
 
+#' @importFrom Seurat CreateDimReducObject SetAssayData
+#' @importFrom Matrix t
+NULL
+
+add_reductions <- function(seu, file_h5) {
+  if (!file_h5$exists('obsm')) return(seu)
+  
+  obsm_grp <- file_h5[['obsm']]
+  red_names <- names(obsm_grp)
+  
+  for (name in red_names) {
+    # Remove 'X_' prefix commonly found in H5AD (e.g., X_pca -> pca)
+    clean_name <- sub("^X_", "", name)
+    key_name <- paste0(toupper(clean_name), "_")
+    
+    mat <- tryCatch({
+      obsm_grp[[name]]$read()
+    }, error = function(e) NULL)
+    
+    if (is.null(mat)) next
+    
+    if (!is.matrix(mat)) mat <- as.matrix(mat)
+    
+    # Check dimensions (rows in H5AD obsm must match columns in Seurat object)
+    if (nrow(mat) != ncol(seu)) {
+      message("Warning: Skipping reduction ", name, " due to dimension mismatch.")
+      next
+    }
+    
+    rownames(mat) <- colnames(seu)
+    colnames(mat) <- paste0(key_name, seq_len(ncol(mat)))
+    
+    tryCatch({
+      seu[[clean_name]] <- Seurat::CreateDimReducObject(
+        embeddings = mat,
+        key = key_name,
+        assay = Seurat::DefaultAssay(seu)
+      )
+    }, error = function(e) {
+      message("Warning: Could not create reduction ", clean_name)
+    })
+  }
+  
+  return(seu)
+}
+
+add_layers <- function(seu, file_h5) {
+  if (!file_h5$exists('layers')) return(seu)
+  
+  layers_grp <- file_h5[['layers']]
+  layer_names <- names(layers_grp)
+  assay_name <- Seurat::DefaultAssay(seu)
+  
+  for (lname in layer_names) {
+    node <- layers_grp[[lname]]
+    
+    # Read matrix using core utility
+    mat <- read_matrix_node(node)
+    
+    if (is.null(mat)) next
+    
+    # Transpose to match Seurat format (Genes x Cells)
+    mat <- Matrix::t(mat)
+    
+    # Validate dimensions
+    if (ncol(mat) == ncol(seu) && nrow(mat) == nrow(seu)) {
+      colnames(mat) <- colnames(seu)
+      rownames(mat) <- rownames(seu)
+      
+      # Store in Seurat V5 layer
+      tryCatch({
+        seu <- Seurat::SetAssayData(seu, layer = lname, new.data = mat, assay = assay_name)
+      }, error = function(e) {
+        message("Warning: Could not set layer ", lname)
+      })
+    } else {
+       message("Warning: Skipping layer ", lname, " due to dimension mismatch.")
+    }
+  }
+  
+  return(seu)
+}
