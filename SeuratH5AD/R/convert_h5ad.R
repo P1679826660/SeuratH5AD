@@ -30,20 +30,16 @@ h5ad_to_seurat <- function(file_path) {
 
   if (is.null(counts_node)) stop('No expression matrix found (X or raw/X)')
 
-  # Read as stored (H5AD usually Cells x Genes)
   counts_mat <- read_matrix_node(counts_node, transpose_output = FALSE)
   if (is.null(counts_mat)) stop("Failed to read counts matrix.")
 
-  # Transpose to Seurat format (Genes x Cells)
   counts_mat <- Matrix::t(counts_mat)
 
-  # Validate Dimensions
   dim_valid <- TRUE
   if (!is.null(obs) && ncol(counts_mat) != nrow(obs)) dim_valid <- FALSE
   if (!is.null(var) && nrow(counts_mat) != nrow(var)) dim_valid <- FALSE
 
   if (!dim_valid) {
-    # Try reverting transpose (if H5AD was non-standard Genes x Cells)
     reverted_mat <- Matrix::t(counts_mat)
     reverted_valid <- TRUE
     if (!is.null(obs) && ncol(reverted_mat) != nrow(obs)) reverted_valid <- FALSE
@@ -57,14 +53,12 @@ h5ad_to_seurat <- function(file_path) {
     }
   }
 
-  # Ensure names
   if (!is.null(obs)) colnames(counts_mat) <- rownames(obs)
   if (!is.null(var)) rownames(counts_mat) <- rownames(var)
   
   if (is.null(colnames(counts_mat))) colnames(counts_mat) <- paste0("Cell_", seq_len(ncol(counts_mat)))
   if (is.null(rownames(counts_mat))) rownames(counts_mat) <- paste0("Gene_", seq_len(nrow(counts_mat)))
 
-  # [FIX] Ensure CsparseMatrix for Seurat Compatibility
   if (!inherits(counts_mat, "CsparseMatrix")) {
     counts_mat <- methods::as(counts_mat, "CsparseMatrix")
   }
@@ -78,7 +72,8 @@ h5ad_to_seurat <- function(file_path) {
       if (ncol(data_mat) == ncol(seu) && nrow(data_mat) == nrow(seu)) {
         colnames(data_mat) <- colnames(seu)
         rownames(data_mat) <- rownames(seu)
-        seu <- Seurat::SetAssayData(seu, slot = 'data', new.data = data_mat)
+        # [FIX] Use layer instead of slot
+        seu <- Seurat::SetAssayData(seu, layer = 'data', new.data = data_mat)
       }
     }
   }
