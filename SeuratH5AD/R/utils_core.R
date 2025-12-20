@@ -4,41 +4,62 @@ NULL
 
 read_matrix_node <- function(node, transpose_output = FALSE) {
   mat <- NULL
+
+  if (is.null(node) || !node$is_valid) return(NULL)
+
   if (inherits(node, 'H5Group')) {
-    if(!exists('h5attr_names', where = asNamespace('hdf5r'))) return(NULL)
+    if (!exists('h5attr_names', where = asNamespace('hdf5r'))) return(NULL)
     attrs <- hdf5r::h5attr_names(node)
-    encoding_attr <- if('encoding-type' %in% attrs) hdf5r::h5attr(node, 'encoding-type') else 'csr_matrix'
-    shape_attr <- if('shape' %in% attrs) hdf5r::h5attr(node, 'shape') else NULL
+
+    encoding_attr <- if ('encoding-type' %in% attrs) hdf5r::h5attr(node, 'encoding-type') else 'csr_matrix'
+    shape_attr <- if ('shape' %in% attrs) hdf5r::h5attr(node, 'shape') else NULL
+
     data <- node[['data']]$read()
     indices <- node[['indices']]$read()
     indptr <- node[['indptr']]$read()
+
+    # Convert 64-bit integers to standard numeric for Matrix package compatibility
+    if (inherits(indices, "integer64")) indices <- as.numeric(indices)
+    if (inherits(indptr, "integer64")) indptr <- as.numeric(indptr)
+
     if (encoding_attr == 'csr_matrix') {
-      mat <- Matrix::sparseMatrix(i = indices + 1, p = indptr, x = data, dims = c(shape_attr[2], shape_attr[1]), index1 = TRUE)
-      if (!transpose_output) mat <- Matrix::t(mat)
+      # CSR logic: Standard H5AD format
+      # CSR stores row pointers (indptr) and column indices (indices).
+      # Matrix::sparseMatrix constructs columns from 'p'.
+      # Passing CSR 'indptr' to 'p' effectively creates a Transposed matrix (CSC).
+      # We construct the transposed matrix directly, then transpose it back to original orientation.
+      mat <- Matrix::sparseMatrix(j = indices, p = indptr, x = data,
+                                  dims = c(shape_attr[2], shape_attr[1]),
+                                  index1 = FALSE)
+      mat <- Matrix::t(mat) 
+      if (transpose_output) mat <- Matrix::t(mat)
+
     } else if (encoding_attr == 'csc_matrix') {
-      mat <- Matrix::sparseMatrix(i = indices + 1, p = indptr, x = data, dims = c(shape_attr[1], shape_attr[2]), index1 = TRUE)
+      # CSC logic: Direct mapping
+      mat <- Matrix::sparseMatrix(i = indices, p = indptr, x = data,
+                                  dims = c(shape_attr[1], shape_attr[2]),
+                                  index1 = FALSE)
       if (transpose_output) mat <- Matrix::t(mat)
     }
-  } else {
-    raw_data <- node[,]
+
+  } else if (inherits(node, 'H5D')) {
+    # Dense matrix logic
+    raw_data <- node$read()
+    if (is.null(dim(raw_data))) raw_data <- as.matrix(raw_data)
+    
     mat <- methods::as(raw_data, 'CsparseMatrix')
     if (transpose_output) mat <- Matrix::t(mat)
   }
+
   return(mat)
 }
 
-calculate_dna_score <- function(identifiers) {
-  if (length(identifiers) == 0) return(0)
-  n_sample <- min(length(identifiers), 100)
-  sample_ids <- identifiers[1:n_sample]
-  clean_ids <- toupper(gsub('[^a-zA-Z]', '', sample_ids))
-  total_chars <- sum(nchar(clean_ids))
-  if (total_chars == 0) return(0)
-  non_acgt_chars <- gsub('[ACGT]', '', clean_ids)
-  return(1 - (sum(nchar(non_acgt_chars)) / total_chars))
-}
-
 h5_node_attributes <- function(node) {
+  if (!node$is_valid) return(list())
   n <- hdf5r::h5attr_names(node)
-  res <- list(); for (i in n) res[[i]] <- hdf5r::h5attr(node, i); return(res)
+  res <- list()
+  for (i in n) {
+    res[[i]] <- tryCatch(hdf5r::h5attr(node, i), error = function(e) NULL)
+  }
+  return(res)
 }
