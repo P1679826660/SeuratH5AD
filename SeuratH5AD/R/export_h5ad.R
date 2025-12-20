@@ -18,7 +18,7 @@ seurat_to_h5ad <- function(seurat_obj, file_path, compression_level = 4, write_r
 
   assay_name <- Seurat::DefaultAssay(seurat_obj)
 
-  # Logic for V5 vs V3 detection
+  # Logic for V5 vs V3
   if (inherits(seurat_obj[[assay_name]], "Assay5")) {
      layers_avail <- SeuratObject::Layers(seurat_obj, assay = assay_name)
      main_layer <- if ('data' %in% layers_avail) 'data' else 'counts'
@@ -26,12 +26,11 @@ seurat_to_h5ad <- function(seurat_obj, file_path, compression_level = 4, write_r
      main_layer <- 'data'
   }
 
-  # Use 'layer' argument to avoid Seurat V5 deprecation warnings
+  # Robust Data Fetching
   main_mat <- tryCatch({
     Seurat::GetAssayData(seurat_obj, layer = main_layer, assay = assay_name)
   }, error = function(e) {
-    # Fallback
-    Seurat::GetAssayData(seurat_obj, layer = 'data', assay = assay_name)
+    Seurat::GetAssayData(seurat_obj, slot = 'data', assay = assay_name)
   })
 
   x_grp <- file_h5$create_group('X')
@@ -43,14 +42,13 @@ seurat_to_h5ad <- function(seurat_obj, file_path, compression_level = 4, write_r
   if (nrow(feat_meta) == 0) feat_meta <- data.frame(row.names = rownames(seurat_obj))
   write_dataframe_h5(file_h5, 'var', feat_meta)
 
-  # Check for counts using 'layer'
+  # Raw Counts Logic
   has_counts <- tryCatch({
-    !is.null(Seurat::GetAssayData(seurat_obj, layer = 'counts', assay = assay_name))
+    !is.null(Seurat::GetAssayData(seurat_obj, slot = 'counts', assay = assay_name))
   }, error = function(e) FALSE)
 
   if (write_raw_slot && has_counts) {
-    counts_mat <- Seurat::GetAssayData(seurat_obj, layer = 'counts', assay = assay_name)
-    
+    counts_mat <- Seurat::GetAssayData(seurat_obj, slot = 'counts', assay = assay_name)
     raw_grp <- file_h5$create_group('raw')
     raw_x_grp <- raw_grp$create_group('X')
     write_matrix_h5(raw_x_grp, counts_mat, compression_level)
