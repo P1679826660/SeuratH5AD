@@ -11,7 +11,7 @@
 * Support 'raw' slot reading and writing.
 * Keep 'obsm' (PCA/UMAP) and 'layers' intact.
 4. * Efficient compression : GZIP Level 4 is used by default when exporting, which significantly reduces the file size without losing accuracy.
-
+5. *Automatically converts obsm embeddings (PCA/UMAP) and uses var/highly_variable if available. Falls back to manual feature selection when metadata is incomplete.
 ## Installation
 
 ```r
